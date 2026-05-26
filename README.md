@@ -8,19 +8,21 @@ A minimal Python project that prints `Hello, world!`.
 
 ## Run
 
+Run directly from the repository:
+
 ```bash
-python -m hello_world.main
+PYTHONPATH=src python3 -m hello_world.main
 ```
 
 Or install the package in editable mode and use the console script:
 
 ```bash
-python -m pip install -e .
+python3 -m pip install -e .
 hello-world
 ```
 
 ## Test
 
 ```bash
-python -m pytest
+PYTHONPATH=src python3 -m unittest
 ```
