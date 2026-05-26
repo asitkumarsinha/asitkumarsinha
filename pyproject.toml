@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "A minimal Hello world project in Python."
 readme = "README.md"
 requires-python = ">=3.9"
+dependencies = [
+    "openpyxl",
+]
 
 [project.scripts]
 hello-world = "hello_world.main:main"
