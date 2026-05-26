@@ -24,5 +24,5 @@ hello-world
 ## Test
 
 ```bash
-PYTHONPATH=src python3 -m unittest
+PYTHONPATH=src python3 -m unittest discover -s tests
 ```
