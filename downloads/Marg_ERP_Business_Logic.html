@@ -1,0 +1,413 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><style>
+@page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+body { font-family: DejaVu Sans, Liberation Sans, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #1a1a1a; }
+h1 { font-size: 20pt; color: #0b3d5c; border-bottom: 2px solid #0b3d5c; padding-bottom: 6px; }
+h2 { font-size: 14pt; color: #0b3d5c; margin-top: 1.4em; }
+h3 { font-size: 12pt; color: #1f4e79; }
+table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 9.5pt; }
+th, td { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; }
+th { background: #0b3d5c; color: #fff; text-align: left; }
+code, pre { font-family: DejaVu Sans Mono, monospace; font-size: 8.5pt; }
+pre { background: #f4f6f8; padding: 10px; white-space: pre-wrap; }
+a { color: #0b3d5c; }
+hr { border: none; border-top: 1px solid #ddd; }
+</style></head><body><h1>Marg ERP — Business Logic</h1>
+<p><strong>Companion to:</strong> <a href="./WHITE_PAPER.md">White paper</a><br />
+<strong>Source:</strong> Public product copy and help articles on <a href="https://margcompusoft.com/">margcompusoft.com</a> and Marg CARE (ERP-to-ERP).<br />
+<strong>Scope:</strong> Logical operating model as marketed. Internal source code, unpublished Control Room flags, and partner-specific customisations are out of scope.</p>
+<p>This document describes <strong>who acts</strong>, <strong>what objects exist</strong>, <strong>which rules fire</strong>, and <strong>how value moves</strong> through the Marg ecosystem.</p>
+<hr />
+<h2>1. Design principles (inferred)</h2>
+<ol>
+<li><strong>Invoice is the system of record for stock and tax.</strong> Every sale/purchase mutates inventory, party ledger, GST registers, and (optionally) e-invoice / e-way / WhatsApp.  </li>
+<li><strong>Pharma/FMCG physics first.</strong> Batch, expiry, MRP, scheme (free/bonus), and HSN are first-class, not afterthoughts.  </li>
+<li><strong>Network beats data entry.</strong> ERP-to-ERP, photo/PDF purchase import, and eRetail exist to eliminate typing between trading partners who already run Marg.  </li>
+<li><strong>Compliance is a pipeline, not a report.</strong> Bill → IRN / e-way → GSTR JSON/Excel/CSV → portal.  </li>
+<li><strong>Role-split mobile.</strong> Owner, retailer, salesman, and delivery staff get different apps, not one mega-app.</li>
+</ol>
+<hr />
+<h2>2. Actors and roles</h2>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Typical product</th>
+<th>Primary jobs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Chemist / medical retailer</td>
+<td>Chemist / Pharmacy / Retail</td>
+<td>Counter billing, expiry, substitutes, ABHA/DHC extras, order from stockist</td>
+</tr>
+<tr>
+<td>Kirana / grocery / garment / jewellery / salon / restaurant</td>
+<td>Vertical retail / POS</td>
+<td>Fast POS, barcode, schemes, multi-tender</td>
+</tr>
+<tr>
+<td>Pharma / FMCG distributor / stockist</td>
+<td>Distribution / Pharma software</td>
+<td>Receive chemist orders, godowns, schemes, e-way, collections</td>
+</tr>
+<tr>
+<td>Manufacturer</td>
+<td>Pharma ERP / Manufacturing</td>
+<td>RM–PM–SFG–FG, costing, production, excise/gate pass (legacy), GST</td>
+</tr>
+<tr>
+<td>Field salesman</td>
+<td>eOrder / SFAXpert</td>
+<td>Book orders, collect, GPS</td>
+</tr>
+<tr>
+<td>Delivery staff</td>
+<td>eDelivery</td>
+<td>Dispatch, proof of delivery, rack/mobile rack</td>
+</tr>
+<tr>
+<td>Business owner</td>
+<td>eOwner / Marg Cloud</td>
+<td>Multi-branch KPIs, credit, cash</td>
+</tr>
+<tr>
+<td>Accountant / CA</td>
+<td>GST modules, CA community</td>
+<td>Returns, TDS/TCS, audit packs</td>
+</tr>
+<tr>
+<td>Partner / BSS</td>
+<td>Partner portal, BSS login</td>
+<td>Sell, implement, AMC, training</td>
+</tr>
+<tr>
+<td>Bank</td>
+<td>Connected banking</td>
+<td>NEFT/RTGS, reconciliation</td>
+</tr>
+<tr>
+<td>GSTN / NIC</td>
+<td>e-invoice, e-way, GST portal</td>
+<td>Statutory IDs and filings</td>
+</tr>
+<tr>
+<td>Patient / end consumer</td>
+<td>POS, MargMart, Digital Healthcare, My Shop QR</td>
+<td>Buy, scan QR, consult, loyalty</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Access pattern:</strong> Silver edition sells “1 full + 1 view-only”; Gold sells unlimited users. User-wise / counter-wise / shift-wise cash is a first-class retail control.</p>
+<hr />
+<h2>3. Core domain objects</h2>
+<pre><code>Company (GSTIN, FY, branches)
+  └── Godown / Store / Rack
+        └── Item (HSN, salt, schedule, barcode)
+              └── Batch (qty, MRP, expiry, rate, scheme)
+  └── Party (customer / supplier / doctor)
+        └── Ledger + CreditLimit + Outstanding + PDC
+  └── Document (SO, PO, SI, PI, DN, CN, Payment, Receipt, JV)
+  └── TaxLine (CGST/SGST/IGST, TCS, TDS)
+  └── Scheme / Discount / Loyalty
+  └── Claim (purchase/sale claim vs company)
+</code></pre>
+<h3>3.1 Item master (especially pharma)</h3>
+<ul>
+<li>Identity: name, pack, company, HSN/SAC, barcode.  </li>
+<li>Clinical/trade: salt composition, substitutes, Schedule H / H1 / narcotics / TB reporting flags.  </li>
+<li>Planning: reorder level, fast/slow/non-moving classification, focused vs dump vs near-expiry buckets.  </li>
+<li>Mapping keys for ERP-to-ERP and purchase import (local item ↔ distributor item).</li>
+</ul>
+<h3>3.2 Batch</h3>
+<ul>
+<li>Quantity on hand per godown.  </li>
+<li>Expiry date; near-expiry window drives alerts and return-to-supplier workflows.  </li>
+<li>MRP vs sale rate vs scheme (free qty).  </li>
+<li>Indexing often by expiry (FEFO-style usage is implied by “expiry management”).</li>
+</ul>
+<h3>3.3 Party</h3>
+<ul>
+<li>GSTIN, billing/shipping, credit limit, salesman, beat (distribution).  </li>
+<li>Family ledger group (chemist: one family, many patients).  </li>
+<li>Doctor (for commission / company-wise sales reports).  </li>
+<li>Distributor mapping for ERP-to-ERP.</li>
+</ul>
+<h3>3.4 Commercial documents</h3>
+<table>
+<thead>
+<tr>
+<th>Document</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sales invoice / POS bill</td>
+<td>−stock, +receivable or cash, GST out, optional IRN, WhatsApp</td>
+</tr>
+<tr>
+<td>Purchase bill</td>
+<td>+stock, +payable, GST in, claim tracking</td>
+</tr>
+<tr>
+<td>Sales/purchase order</td>
+<td>Reservation / pipeline; ERP-to-ERP SO lands as order on distributor</td>
+</tr>
+<tr>
+<td>Debit / credit note</td>
+<td>Tax and value correction</td>
+</tr>
+<tr>
+<td>E-way bill</td>
+<td>Movement compliance above threshold</td>
+</tr>
+<tr>
+<td>Payment / receipt</td>
+<td>Ledger + reconciliation; MargPay auto-links bill</td>
+</tr>
+<tr>
+<td>Production / issue / receipt</td>
+<td>Manufacturing inventory state changes</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>4. End-to-end process flows</h2>
+<h3>4.1 Retail counter (happy path)</h3>
+<pre><code>Scan/search item (barcode | name | salt | substitute)
+  → Select batch (prefer valid, non-expired; warn near-expiry)
+  → Apply MRP, discount, scheme, GST (CGST/SGST or IGST)
+  → Tender: cash | UPI | card | wallet | credit (check live credit limit)
+  → Print / WhatsApp invoice
+  → Decrement batch qty; update cash drawer / shift; queue GST register
+  → Optional: ABHA 2.0 line (chemist incentive), DHC upsell, loyalty points
+</code></pre>
+<p><strong>Rules</strong></p>
+<ul>
+<li>Do not sell expired batch; alert near-expiry.  </li>
+<li>If customer credit limit exceeded, notify during billing.  </li>
+<li>Multi-tender allowed; denomination tracking for cash.  </li>
+<li>User/counter/shift isolation for cash summary.  </li>
+<li>Substitute suggestion when asked SKU is missing (salt match + supplier location via PharmaNXT).</li>
+</ul>
+<h3>4.2 Purchase and replenishment</h3>
+<pre><code>Trigger: reorder report (sale velocity | profit | stock days | shortage)
+     or  ERP-to-ERP cart
+     or  Photo / PDF / Excel / CSV of supplier bill
+  → Map lines to item master
+  → Create purchase / GRN
+  → Receive batches (qty, expiry, MRP, free qty)
+  → Book payable; GST ITC register
+  → Register purchase claim if scheme/company benefit exists
+</code></pre>
+<p><strong>Rules</strong></p>
+<ul>
+<li>Prefer import over typing (“100% accuracy” claim).  </li>
+<li>Map unknown SKUs before posting.  </li>
+<li>Free/bonus qty from schemes must land as stock without inflating purchase value incorrectly (scheme engine).  </li>
+<li>Near-expiry and dump stock feed “push sale” and return-to-supplier.</li>
+</ul>
+<h3>4.3 ERP-to-ERP ordering (two-sided)</h3>
+<p><strong>Retailer setup</strong></p>
+<ol>
+<li>Map distributor party.  </li>
+<li>Map items (including bulk auto-map).  </li>
+<li>Browse live stock, rate, scheme on distributor.  </li>
+<li>Cart → Place order (<code>Transaction &gt; ERP to ERP Order</code> in help docs).</li>
+</ol>
+<p><strong>Distributor setup</strong></p>
+<ol>
+<li><code>Master &gt; eBusiness Setup</code> → Register company.  </li>
+<li>Receive orders into ERP (no phone/WhatsApp typing).  </li>
+<li>Shortage visibility; convert to invoice / pick / dispatch.</li>
+</ol>
+<p><strong>Network rule:</strong> both ends must be on Marg; value is error reduction and speed, not a public open marketplace.</p>
+<h3>4.4 Distribution / warehouse</h3>
+<pre><code>Inbound order (ERP-to-ERP | eOrder | phone entered)
+  → Allocate batch (FEFO / scheme / MRP constraints)
+  → Pick (rack / mobile rack)
+  → Invoice + e-invoice (IRN) + e-way if goods movement requires
+  → eDelivery assign
+  → Proof of delivery → receivable
+  → WhatsApp reminder if overdue
+</code></pre>
+<p><strong>Rules</strong></p>
+<ul>
+<li>Multi-godown stock truth.  </li>
+<li>Credit limit on chemist.  </li>
+<li>Scheme date/qty/batch conditions.  </li>
+<li>Expiry returns to principal to avoid dump loss.</li>
+</ul>
+<h3>4.5 Manufacturing (pharma ERP pages)</h3>
+<p>Inventory layers: <strong>raw material, packing material, semi-finished, finished goods</strong>.</p>
+<pre><code>Plan production → issue RM/PM → process / assemble → receipt FG
+  → Cost rollup (bulk vs FG)
+  → FG batch + expiry
+  → Sale as in distribution
+  → Wastage analysis, multi-store
+</code></pre>
+<p>Supporting: production planning, costing, gate pass / invoice, multi-warehouse, MIS.</p>
+<h3>4.6 GST “billing to filing”</h3>
+<pre><code>Taxable document posted
+  → Split CGST/SGST vs IGST from place of supply
+  → If turnover/threshold: generate e-invoice (IRN); advertised ~₹0.15 / auto IRN
+  → If movement threshold: e-way bill
+  → Period close: GSTR-1 / 3B (and other returns as applicable), TCS/TDS
+  → Export Excel | JSON | CSV to GSTN
+  → Internal audit reports; GST 2.0 / IMS / GSTR-9 Table 8A readiness
+</code></pre>
+<p><strong>Rules</strong></p>
+<ul>
+<li>Tax computed at billing time, not as a night batch only.  </li>
+<li>Portal visit is optional if APIs/files succeed; fallback is file upload.  </li>
+<li>TDS/TCS calculated in accounting, not only in GST returns.</li>
+</ul>
+<h3>4.7 Money movement</h3>
+<pre><code>Invoice outstanding
+  → Reminder (WhatsApp / SMS / email)
+  → Collect: cash | cheque/PDC | MargPay QR/UPI | connected NEFT/RTGS
+  → Auto reconcile (140+ banks claimed)
+  → Bill-by-bill matching
+</code></pre>
+<p><strong>MargPay commercial rule (as advertised):</strong> 0% service charge to merchant; 2% cashback for retailers (verify contractually; this is marketing).</p>
+<h3>4.8 Multi-company / multi-location</h3>
+<ul>
+<li>Company is a licensed object (Nano/Basic cap at 2; Gold unlimited).  </li>
+<li>DMSXpert / Marg Cloud: central users, branches, logs.  </li>
+<li>Stock and books can be per location with consolidated owner view.</li>
+</ul>
+<hr />
+<h2>5. Decision and calculation engines</h2>
+<h3>5.1 Tax</h3>
+<ul>
+<li><strong>Intra-state:</strong> CGST + SGST.  </li>
+<li><strong>Inter-state:</strong> IGST.  </li>
+<li>HSN from item; GSTIN from party; place of supply from shipping.  </li>
+<li>Reverse charge / TCS / TDS when nature of supply requires (feature-listed, not fully specified publicly).</li>
+</ul>
+<h3>5.2 Price and scheme</h3>
+<p>Inputs: MRP, party rate list, date-effective scheme, qty slabs, free goods, combo, loyalty, making-charge/weight/purity (jewellery), doctor commission (chemist).</p>
+<p>Output: net taxable, discount, free qty, tax, margin reports.</p>
+<h3>5.3 Inventory health</h3>
+<p>Classification used in copy:</p>
+<ul>
+<li>Fast / slow / non-moving  </li>
+<li>Focused / dump / near-expiry  </li>
+<li>Reorder from sale, profit, or stock-cover days  </li>
+</ul>
+<p>Alerts: low stock, expiry, payments.</p>
+<h3>5.4 Credit</h3>
+<p>Live check at invoice time; notifications; outstanding ageing; PDC.</p>
+<h3>5.5 Jewellery-specific (vertical overlay)</h3>
+<p>Weight × rate × purity + making charges; old gold exchange; karigar/repair/approval; high-value barcode/tag.</p>
+<h3>5.6 Restaurant-specific</h3>
+<p>Dine-in / takeaway / delivery; KOT to kitchen; bill split; dish popularity.</p>
+<hr />
+<h2>6. Integration logic</h2>
+<table>
+<thead>
+<tr>
+<th>Rail</th>
+<th>Business effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GSTN / e-invoice / e-way</td>
+<td>Legal invoice identity and transit</td>
+</tr>
+<tr>
+<td>WhatsApp / SMS / email</td>
+<td>Invoice delivery and collection</td>
+</tr>
+<tr>
+<td>Banks (ICICI, Axis, SBI, J&amp;K, IndusInd, 140+ recon)</td>
+<td>Pay out and auto-match</td>
+</tr>
+<tr>
+<td>Barcode / pole display / cash drawer / touch POS</td>
+<td>Counter speed</td>
+</tr>
+<tr>
+<td>MargMart / My Shop QR</td>
+<td>Consumer or retailer self-order</td>
+</tr>
+<tr>
+<td>ABHA 2.0 / Digital Healthcare</td>
+<td>Chemist extra income (e.g. ₹20 per ABHA billing in campaign copy)</td>
+</tr>
+<tr>
+<td>OCR / photo-to-purchase</td>
+<td>Inbound invoice capture</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>7. Reporting (decision layer)</h2>
+<p>Advertised <strong>1,000+ MIS reports</strong>, including:</p>
+<ul>
+<li>GST, trial balance, P&amp;L, balance sheet, cash flow, ledger  </li>
+<li>Stock, expiry, dump, reorder, godown  </li>
+<li>Salesman / counter / shift / day cash  </li>
+<li>Doctor commission and company-wise pharma sales  </li>
+<li>Claims and scheme benefit tracking  </li>
+<li>Production costing and wastage (manufacturing)</li>
+</ul>
+<p><strong>Operating rule:</strong> operational users live in transaction screens; owners live in eOwner + MIS; accountants live in GST and financial statements.</p>
+<hr />
+<h2>8. Licensing logic (commercial rules)</h2>
+<ul>
+<li>Geography: India &amp; South Asia (INR) vs rest of world (USD).  </li>
+<li>GST 18% extra on license.  </li>
+<li>Extra <strong>user</strong> and extra <strong>company</strong> are billable SKUs except Gold (unlimited).  </li>
+<li>Customisation is a separate SOW.  </li>
+<li>Unauthorized marketplace purchase → no official support.  </li>
+<li>Attach products (Cloud, Books, Pay, e-invoice per IRN, healthcare, training) stack on the core license.</li>
+</ul>
+<hr />
+<h2>9. Control and security (as claimed)</h2>
+<ul>
+<li>User rights (full vs view-only).  </li>
+<li>Counter and cash-drawer access.  </li>
+<li>Marg Cloud: branch, user, data, log control.  </li>
+<li>“7-layered data security”; Azure encryption mentioned in third-party interviews for cloud.  </li>
+<li>Audit-ready books for GST and internal audit.</li>
+</ul>
+<hr />
+<h2>10. State machine (document)</h2>
+<pre><code>Draft → Confirmed/Posted → (IRN assigned) → (E-way assigned)
+                  ↓
+            Partially paid → Settled
+                  ↓
+         Credit/Debit note / Cancel (statutory rules)
+</code></pre>
+<p>Inventory moves only on <strong>posted</strong> goods documents. GST registers move with posted taxable documents. Bank/cash moves with payment documents. ERP-to-ERP orders are <strong>pre-invoice</strong> states on the distributor until billed.</p>
+<hr />
+<h2>11. Value-chain map (pharma)</h2>
+<pre><code>Manufacturer (Marg Manufacturing)
+        ↓ FG invoices + e-way
+Distributor / Stockist (Marg Distribution)
+        ↓ ERP-to-ERP / eRetail / schemes
+Chemist (Marg Chemist)
+        ↓ POS + GST + optional ABHA/DHC
+Patient
+</code></pre>
+<p>Marg’s distinctive business logic is <strong>closing the middle arrow</strong> so the chemist’s shortage becomes a structured order on the stockist’s ERP, with shared item mapping, live rate/scheme, and no re-keying.</p>
+<hr />
+<h2>12. Implementation checklist (logical, not a user manual)</h2>
+<ol>
+<li>Create company, FY, GSTIN, godowns.  </li>
+<li>Load item master (or PharmaNXT-assisted).  </li>
+<li>Opening batches with expiry.  </li>
+<li>Party masters + credit limits + GSTIN.  </li>
+<li>Tax and series (invoice numbering).  </li>
+<li>User roles and counters.  </li>
+<li>Bank and MargPay.  </li>
+<li>e-invoice / e-way credentials.  </li>
+<li>Distributor/item mapping for ERP-to-ERP.  </li>
+<li>WhatsApp templates; reorder parameters; scheme calendar.  </li>
+<li>Go-live parallel run; partner AMC and GST update channel.</li>
+</ol>
+<hr />
+<p><em>Figures, prices, and slogans are taken from Marg’s public site as of August 2026 and may change. Use this as a product/domain blueprint, not as a contract or statutory opinion.</em></p></body></html>
